@@ -55,9 +55,12 @@ DepthAnythingNode::DepthAnythingNode(const rclcpp::NodeOptions & node_options)
   node_param_.precision = declare_parameter<std::string>("precision");
 
   // Subscriber
+  // sub_image_ = image_transport::create_subscription(
+  //   this, "~/input/image", std::bind(&DepthAnythingNode::onData, this, _1), "raw",
+  //   rmw_qos_profile_sensor_data);
   sub_image_ = image_transport::create_subscription(
     this, "~/input/image", std::bind(&DepthAnythingNode::onData, this, _1), "raw",
-    rmw_qos_profile_sensor_data);
+    rmw_qos_profile_services_default);
 
   // Publisher
   pub_depth_image_ = create_publisher<sensor_msgs::msg::Image>("~/output/depth_image", 1);

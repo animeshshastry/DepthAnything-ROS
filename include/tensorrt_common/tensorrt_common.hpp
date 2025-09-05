@@ -107,7 +107,7 @@ struct InferDeleter  // NOLINT
   void operator()(T * obj) const
   {
     if (obj) {
-#if TENSORRT_VERSION_MAJOR >= 8
+#if NV_TENSORRT_MAJOR >= 8
       delete obj;
 #else
       obj->destroy();
@@ -183,7 +183,7 @@ public:
   nvinfer1::Dims getBindingDimensions(const int32_t index) const;
   int32_t getNbBindings();
   bool setBindingDimensions(const int32_t index, const nvinfer1::Dims & dimensions) const;
-  bool enqueueV2(void ** bindings, cudaStream_t stream, cudaEvent_t * input_consumed);
+  bool enqueue(void ** bindings, cudaStream_t stream, cudaEvent_t * input_consumed);
 
   /**
    * @brief output per-layer information

@@ -454,6 +454,38 @@ bool TrtCommon::buildEngineFromOnnx(
     batch_config_[0] = input_batch;
   }
 
+  // if (batch_config_.at(0) > 1 && (batch_config_.at(0) == batch_config_.at(2))) {
+  //   // Attention : below API is deprecated in TRT8.4
+  //   builder->setMaxBatchSize(batch_config_.at(2));
+  // } else {
+  //   if (build_config_->profile_per_layer) {
+  //     auto profile = builder->createOptimizationProfile();
+  //     profile->setDimensions(
+  //       network->getInput(0)->getName(), nvinfer1::OptProfileSelector::kMIN,
+  //       nvinfer1::Dims4{batch_config_.at(0), input_channel, input_height, input_width});
+  //     profile->setDimensions(
+  //       network->getInput(0)->getName(), nvinfer1::OptProfileSelector::kOPT,
+  //       nvinfer1::Dims4{batch_config_.at(1), input_channel, input_height, input_width});
+  //     profile->setDimensions(
+  //       network->getInput(0)->getName(), nvinfer1::OptProfileSelector::kMAX,
+  //       nvinfer1::Dims4{batch_config_.at(2), input_channel, input_height, input_width});
+  //     config->addOptimizationProfile(profile);
+  //   }
+  // }
+
+#if NV_TENSORRT_MAJOR >= 8
+  auto profile = builder->createOptimizationProfile();
+  profile->setDimensions(
+    network->getInput(0)->getName(), nvinfer1::OptProfileSelector::kMIN,
+    nvinfer1::Dims4{batch_config_.at(0), input_channel, input_height, input_width});
+  profile->setDimensions(
+    network->getInput(0)->getName(), nvinfer1::OptProfileSelector::kOPT,
+    nvinfer1::Dims4{batch_config_.at(1), input_channel, input_height, input_width});
+  profile->setDimensions(
+    network->getInput(0)->getName(), nvinfer1::OptProfileSelector::kMAX,
+    nvinfer1::Dims4{batch_config_.at(2), input_channel, input_height, input_width});
+  config->addOptimizationProfile(profile);
+#else
   if (batch_config_.at(0) > 1 && (batch_config_.at(0) == batch_config_.at(2))) {
     // Attention : below API is deprecated in TRT8.4
     builder->setMaxBatchSize(batch_config_.at(2));
@@ -472,6 +504,8 @@ bool TrtCommon::buildEngineFromOnnx(
       config->addOptimizationProfile(profile);
     }
   }
+#endif
+
   if (precision_ == "int8" && calibrator_) {
     config->setFlag(nvinfer1::BuilderFlag::kINT8);
 #if (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + NV_TENSOR_PATCH >= 8200
@@ -491,7 +525,7 @@ bool TrtCommon::buildEngineFromOnnx(
 #endif
   }
 
-#if TENSORRT_VERSION_MAJOR >= 8
+#if NV_TENSORRT_MAJOR >= 8
   auto plan =
     TrtUniquePtr<nvinfer1::IHostMemory>(builder->buildSerializedNetwork(*network, *config));
   if (!plan) {
@@ -510,7 +544,7 @@ bool TrtCommon::buildEngineFromOnnx(
   }
 
   // save engine
-#if TENSORRT_VERSION_MAJOR < 8
+#if NV_TENSORRT_MAJOR < 8
   auto data = TrtUniquePtr<nvinfer1::IHostMemory>(engine_->serialize());
 #endif
   std::ofstream file;
@@ -518,7 +552,7 @@ bool TrtCommon::buildEngineFromOnnx(
   if (!file.is_open()) {
     return false;
   }
-#if TENSORRT_VERSION_MAJOR < 8
+#if NV_TENSORRT_MAJOR < 8
   file.write(reinterpret_cast<const char *>(data->data()), data->size());
 #else
   file.write(reinterpret_cast<const char *>(plan->data()), plan->size());
@@ -531,6 +565,24 @@ bool TrtCommon::buildEngineFromOnnx(
 
 bool TrtCommon::isInitialized() { return is_initialized_; }
 
+// nvinfer1::Dims TrtCommon::getBindingDimensions(const int32_t index) const
+// {
+// #if (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + (NV_TENSOR_PATCH * 10) >= 8500
+//   auto const & name = engine_->getIOTensorName(index);
+//   auto dims = context_->getTensorShape(name);
+//   bool const has_runtime_dim =
+//     std::any_of(dims.d, dims.d + dims.nbDims, [](int32_t dim) { return dim == -1; });
+
+//   if (has_runtime_dim) {
+//     return dims;
+//   } else {
+//     return context_->getBindingDimensions(index);
+//   }
+// #else
+//   return context_->getBindingDimensions(index);
+// #endif
+// }
+
 nvinfer1::Dims TrtCommon::getBindingDimensions(const int32_t index) const
 {
 #if (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + (NV_TENSOR_PATCH * 10) >= 8500
@@ -542,26 +594,56 @@ nvinfer1::Dims TrtCommon::getBindingDimensions(const int32_t index) const
   if (has_runtime_dim) {
     return dims;
   } else {
+#if NV_TENSORRT_MAJOR > 8
+    return engine_->getTensorShape(name);
+#else
     return context_->getBindingDimensions(index);
+#endif
   }
 #else
   return context_->getBindingDimensions(index);
 #endif
 }
 
-int32_t TrtCommon::getNbBindings() { return engine_->getNbBindings(); }
+// int32_t TrtCommon::getNbBindings() { return engine_->getNbBindings(); }
+
+int32_t TrtCommon::getNbBindings()
+{
+#if (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + (NV_TENSOR_PATCH * 10) >= 8500
+  // Newer TensorRT versions use I/O tensor APIs
+  return engine_->getNbIOTensors();
+#else
+  return engine_->getNbBindings();
+#endif
+}
 
 bool TrtCommon::setBindingDimensions(const int32_t index, const nvinfer1::Dims & dimensions) const
 {
+#if (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + (NV_TENSOR_PATCH * 10) >= 8500
+  return context_->setInputShape(engine_->getIOTensorName(index), dimensions);
+#else
   return context_->setBindingDimensions(index, dimensions);
+#endif
 }
 
-bool TrtCommon::enqueueV2(void ** bindings, cudaStream_t stream, cudaEvent_t * input_consumed)
+bool TrtCommon::enqueue(void ** bindings, cudaStream_t stream, cudaEvent_t * input_consumed)
 {
+#if (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + (NV_TENSOR_PATCH * 10) >= 8500
+  // Set tensor addresses for all I/O tensors before enqueueV3
+  for (int i = 0; i < engine_->getNbIOTensors(); ++i) {
+    const char* tensor_name = engine_->getIOTensorName(i);
+    context_->setTensorAddress(tensor_name, bindings[i]);
+  }
+#endif
+
   if (build_config_->profile_per_layer) {
     auto inference_start = std::chrono::high_resolution_clock::now();
 
+#if (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + (NV_TENSOR_PATCH * 10) >= 8500
+    bool ret = context_->enqueueV3(stream);
+#else
     bool ret = context_->enqueueV2(bindings, stream, input_consumed);
+#endif
 
     auto inference_end = std::chrono::high_resolution_clock::now();
     host_profiler_.reportLayerTime(
@@ -569,7 +651,11 @@ bool TrtCommon::enqueueV2(void ** bindings, cudaStream_t stream, cudaEvent_t * i
       std::chrono::duration<float, std::milli>(inference_end - inference_start).count());
     return ret;
   } else {
+#if (NV_TENSORRT_MAJOR * 1000) + (NV_TENSORRT_MINOR * 100) + (NV_TENSOR_PATCH * 10) >= 8500
+    return context_->enqueueV3(stream);
+#else
     return context_->enqueueV2(bindings, stream, input_consumed);
+#endif
   }
 }
 

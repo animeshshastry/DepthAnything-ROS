@@ -302,7 +302,7 @@ bool TrtDepth_Anything::doInference(const std::vector<cv::Mat> & images)
 bool TrtDepth_Anything::infer()
 {
   std::vector<void *> buffers = {input_d_.get(), out_prob_d_.get()};
-  trt_common_->enqueueV2(buffers.data(), *stream_, nullptr);
+  trt_common_->enqueue(buffers.data(), *stream_, nullptr);
 
   CHECK_CUDA_ERROR(cudaMemcpyAsync(
     out_prob_h_.get(), out_prob_d_.get(), sizeof(float) * out_elem_num_, cudaMemcpyDeviceToHost,
