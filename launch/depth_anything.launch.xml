@@ -3,7 +3,9 @@
   <!-- <arg name="input/image" default="/quadrotor1/RGBD/color/image_raw" /> -->
   <arg name="output/depth_image" default="quadrotor1/depth_image" />
   <arg name="param_path" default="$(find-pkg-share depth_anything)/config/depth_anything.param.yaml" />
-  <arg name="onnx_path" default="$(find-pkg-share depth_anything)/data/depth_anything_vitb14.onnx" />
+  <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_vitb14.onnx" /> -->
+  <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vitb.onnx" />
+  <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vits.onnx" /> -->
 
   <node pkg="depth_anything" exec="depth_anything_node" name="depth_anything" output="screen">
     <remap from="~/input/image" to="$(var input/image)"/>
