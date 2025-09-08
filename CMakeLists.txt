@@ -115,10 +115,24 @@ rclcpp_components_register_node(depth_anything_node_component
   EXECUTABLE depth_anything_node
 )
 
+# Create the executable
+add_executable(depth_align_node src/depth_align_node.cpp)
+ament_target_dependencies(depth_align_node
+  rclcpp
+  sensor_msgs
+  cv_bridge
+  OpenCV
+  message_filters
+)
+# Install the node
+install(TARGETS
+  depth_align_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Tests
 if(BUILD_TESTING)
   list(APPEND AMENT_LINT_AUTO_EXCLUDE ament_cmake_uncrustify)
-
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 endif()

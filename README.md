@@ -1,3 +1,9 @@
+# VIO assisted DepthAnything for metric depth
+
+This framework outputs metric depth by scaling depthmaps obtained from depth anything v2 with the help of SLAM pointcloud obtained from OpenVINS.
+![VIO assisted DepthAnything system overview](docs/depth_prediction.png)
+
+This work was build upon:
 # DepthAnything-ROS
 
 `DepthAnything-ROS` is a ROS2 wrapper for [Depth-Anything](https://github.com/LiheYoung/Depth-Anything).
