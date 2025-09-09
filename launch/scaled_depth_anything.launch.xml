@@ -33,7 +33,7 @@
     <remap from="depth_image"         to="$(var true_depth)"/>
     <param name="fixed_frame_id"      value="$(var name)/odom"/>
     <param name="cam_frame_id"        value="$(var camera_frame)"/>
-    <param name="wait_for_transform"  value="0.2"/>
+    <param name="wait_for_transform"  value="0.3"/>
     <param name="syncQueueSize"       value="10"/>
     <param name="topicQueueSize"      value="3"/>
     <param name="approx"              value="true"/>

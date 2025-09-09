@@ -86,6 +86,9 @@ private:
 	std::string fixedFrameId_ = "odom";
 	std::string camFrameId_ = "cam0";
 
+	rtabmap::Transform cloudDisplacement;
+	rtabmap::Transform localTransform;
+
     void callback(
 		const sensor_msgs::msg::PointCloud2::ConstSharedPtr pointCloud2Msg,
 		const sensor_msgs::msg::CameraInfo::ConstSharedPtr cameraInfoMsg) {
@@ -95,26 +98,28 @@ private:
 			double cloudStamp = rtabmap_conversions::timestampFromROS(pointCloud2Msg->header.stamp);
 			double infoStamp = rtabmap_conversions::timestampFromROS(cameraInfoMsg->header.stamp);
 
-			rtabmap::Transform cloudDisplacement = rtabmap::Transform::getIdentity();
-			if(!fixedFrameId_.empty())
-			{
-				// approx sync
-				cloudDisplacement = rtabmap_conversions::getMovingTransform(
-						pointCloud2Msg->header.frame_id,
-						fixedFrameId_,
-						pointCloud2Msg->header.stamp,
-						cameraInfoMsg->header.stamp,
-						*tfBuffer_,
-						waitForTransform_);
-			}
+			if (pointCloud2Msg->header.frame_id != fixedFrameId_){
+				cloudDisplacement = rtabmap::Transform::getIdentity();
+				if(!fixedFrameId_.empty())
+				{
+					// approx sync
+					cloudDisplacement = rtabmap_conversions::getMovingTransform(
+							pointCloud2Msg->header.frame_id,
+							fixedFrameId_,
+							pointCloud2Msg->header.stamp,
+							cameraInfoMsg->header.stamp,
+							*tfBuffer_,
+							waitForTransform_);
+				}
 
-			if(cloudDisplacement.isNull())
-			{
-				RCLCPP_ERROR(this->get_logger(), "Could not find transform between %s and %s, accordingly to %s, aborting!",
-					pointCloud2Msg->header.frame_id.c_str(), 
-					camFrameId_.c_str(),
-					fixedFrameId_.c_str());
-				return;
+				if(cloudDisplacement.isNull())
+				{
+					RCLCPP_ERROR(this->get_logger(), "Could not find transform between %s and %s, accordingly to %s, aborting!",
+						pointCloud2Msg->header.frame_id.c_str(), 
+						camFrameId_.c_str(),
+						fixedFrameId_.c_str());
+					return;
+				}
 			}
 
 			rtabmap::Transform cloudToCamera = rtabmap_conversions::getTransform(
@@ -131,7 +136,13 @@ private:
 					camFrameId_.c_str());
 				return;
 			}
-			rtabmap::Transform localTransform = cloudDisplacement*cloudToCamera;
+
+			if (pointCloud2Msg->header.frame_id != fixedFrameId_){
+				localTransform = cloudDisplacement*cloudToCamera;
+			} else{
+				// RCLCPP_INFO(this->get_logger(), "Fixed frame and cloud frame match");
+				localTransform = cloudToCamera;
+			}
 
 			rtabmap::CameraModel model = rtabmap_conversions::cameraModelFromROS(*cameraInfoMsg, localTransform);
 			sensor_msgs::msg::CameraInfo cameraInfoMsgOut = *cameraInfoMsg;
