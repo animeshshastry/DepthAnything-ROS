@@ -3,7 +3,8 @@
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
 #include <message_filters/subscriber.h>
-#include <message_filters/sync_policies/approximate_time.h>
+#include <message_filters/sync_policies/approximate_time.hpp>
+#include <message_filters/sync_policies/exact_time.hpp>
 #include <message_filters/synchronizer.h>
 
 class DepthAlignNode : public rclcpp::Node {
@@ -27,11 +28,11 @@ public:
             std::placeholders::_1, std::placeholders::_2));
 
         // Publisher
-        pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", 1);
+        pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", rclcpp::QoS(1).reliability((rmw_qos_reliability_policy_t)1));
     }
 
 private:
-    typedef message_filters::sync_policies::ApproximateTime<
+    typedef message_filters::sync_policies::ExactTime<
         sensor_msgs::msg::Image,
         sensor_msgs::msg::Image> SyncPolicy;
 
@@ -42,24 +43,26 @@ private:
     void callback(const sensor_msgs::msg::Image::ConstSharedPtr& sparse_msg,
                   const sensor_msgs::msg::Image::ConstSharedPtr& dense_msg) {
         // Convert to OpenCV
-        cv::Mat sparse = cv_bridge::toCvShare(sparse_msg, "32FC1")->image;
+        cv::Mat sparse = cv_bridge::toCvShare(sparse_msg, "16UC1")->image; // depth in mm
         cv::Mat disp8  = cv_bridge::toCvShare(dense_msg, "mono8")->image;
-        cv::Mat disp;
-        disp8.convertTo(disp, CV_32F);
+
+        sparse.convertTo(sparse, CV_32FC1, 1.0/1000.0); // convert to meters
 
         // Convert disparity -> depth (predicted)
-        cv::Mat dense = 1.0f / (disp + 1e-6f);
+        cv::Mat dense;
+        disp8.convertTo(dense, CV_32FC1); // avoid integer division
+        dense = 1.0f / (dense + 1e-6f); // dense_depth
+        // dense.convertTo(dense, CV_16U);      // back to 16-bit unsigned
 
         std::vector<float> xs, ys;
         // xs.reserve(sparse.rows * sparse.cols / 10); // heuristic
         // ys.reserve(xs.size());
 
-        for (int v = 0; v < sparse.rows; v++) {
-            for (int u = 0; u < sparse.cols; u++) {
+        for (uint16_t v = 0; v < sparse.rows; v++) {
+            for (uint16_t u = 0; u < sparse.cols; u++) {
                 float d_sparse = sparse.at<float>(v, u);
                 float d_pred   = dense.at<float>(v, u);
-                if (d_sparse > 0.0f && d_pred > 0.0f &&
-                    d_sparse < 20.0f && !std::isnan(d_sparse)) {
+                if (d_sparse < 20.0f && d_sparse > 0.0f && d_pred > 0.0f) { // consider valid sparse points only
                     ys.push_back(d_sparse);
                     xs.push_back(d_pred);
                 }
@@ -87,7 +90,7 @@ private:
         // Mean scaling
         double sum = 0.0;
         for (size_t i = 0; i < xs.size(); i++) {
-            sum += ys[i] / xs[i];
+            sum += ys[i]/xs[i];
         }
         double s = sum/xs.size();
         double b = 0.0;
@@ -98,8 +101,8 @@ private:
 
         // Apply correction
         cv::Mat corrected = s * dense + b;
-        // Set corrected values > 10.0 to NaN
-        // corrected.setTo(std::numeric_limits<float>::quiet_NaN(), corrected > 20.0f);
+
+        corrected.convertTo(corrected, CV_32FC1);
 
         // Publish
         auto out_msg = cv_bridge::CvImage(dense_msg->header, "32FC1", corrected).toImageMsg();

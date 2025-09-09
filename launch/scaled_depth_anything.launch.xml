@@ -2,35 +2,41 @@
 
   <arg name="name" default="quadrotor1" />
 
-  <!-- <arg name="input/image" default="$(var name)/tracking_front/color/image_raw" /> -->
+  <!-- <arg name="input/image" default="/$(var name)/tracking_front/color/image_raw" />
+  <arg name="camera_info" default="/$(var name)/tracking_front/color/image_raw/camera_info" />
+  <arg name="camera_frame" default="$(var name)/tracking_front_frame" /> -->
+
   <arg name="input/image" default="/$(var name)/RGBD/color/image_raw" />
-  <arg name="output/depth_image" default="$(var name)/depth_image_scaled" />
+  <arg name="camera_info" default="/$(var name)/RGBD/color/image_raw/camera_info" />
+  <arg name="camera_frame" default="$(var name)/RGBD_frame" />
+
+  <arg name="output/depth_image" default="disparity" />
   <arg name="param_path" default="$(find-pkg-share depth_anything)/config/depth_anything.param.yaml" />
   <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_vitb14.onnx" /> -->
   <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vitb.onnx" />
   <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vits.onnx" /> -->
 
-  <!-- <arg name="cloud" default="$(var name)/openvins/points_slam" /> -->
-  <arg name="cloud" default="$(var name)/openvins/points_slam" />
-  <!-- <arg name="camera_info" default="$(var name)/tracking_front/color/image_raw/camera_info" /> -->
-  <arg name="camera_info" default="$(var name)/RGBD/color/image_raw/camera_info" />
-  <arg name="true_depth" default="$(var name)/sparse_depth" />
+  <arg name="cloud" default="/$(var name)/openvins/points_slam" />
 
-  <node pkg="depth_anything" exec="depth_anything_node" name="depth_anything" output="screen">
+  <arg name="true_depth" default="sparse_depth" />
+
+  <node pkg="depth_anything" exec="depth_anything_node" name="depth_anything" namespace="$(var name)/depth_anthing" output="screen">
     <remap from="~/input/image" to="$(var input/image)"/>
     <remap from="~/output/depth_image" to="$(var output/depth_image)"/>
     <param from="$(var param_path)" />
     <param name="onnx_path" value="$(var onnx_path)"/>
   </node>
 
-  <node pkg="rtabmap_util" exec="pointcloud_to_depthimage" name="pointcloud_to_depthimage" output="screen">
-    <remap from="cloud" to="$(var cloud)"/>
-    <remap from="camera_info" to="$(var camera_info)"/>
-    <remap from="image" to="$(var true_depth)"/>
-    <remap from="image_raw" to="$(var true_depth)/mm"/>
-    <param name="fixed_frame_id" value="$(var name)/odom"/>
-    <param name="decimation" value="0"/>
-    <param name="wait_for_transform" value="0.2"/>
+  <node pkg="depth_anything" exec="pointcloud_to_depthimage_node" name="pointcloud_to_depthimage" namespace="$(var name)/depth_anthing" output="screen">
+    <remap from="cloud"               to="$(var cloud)"/>
+    <remap from="camera_info"         to="$(var camera_info)"/>
+    <remap from="depth_image"         to="$(var true_depth)"/>
+    <param name="fixed_frame_id"      value="$(var name)/odom"/>
+    <param name="cam_frame_id"        value="$(var camera_frame)"/>
+    <param name="wait_for_transform"  value="0.2"/>
+    <param name="syncQueueSize"       value="10"/>
+    <param name="topicQueueSize"      value="3"/>
+    <param name="approx"              value="true"/>
   </node>
 
   <node pkg="ov_msckf" exec="run_subscribe_msckf" name="open_vins" output="screen" namespace="$(var name)/openvins">
@@ -44,10 +50,10 @@
     <remap from="odomimu"               to="/$(var name)/odometry/local"/>
   </node> 
 
-  <node pkg="depth_anything" exec="depth_align_node" name="depth_anything" output="screen">
+  <node pkg="depth_anything" exec="depth_align_node" name="depth_anything" namespace="$(var name)/depth_anthing" output="screen">
     <remap from="sparse_topic" to="$(var true_depth)"/>
     <remap from="dense_topic" to="$(var output/depth_image)"/>
-    <remap from="output_topic" to="$(var name)/depth_image"/>
+    <remap from="output_topic" to="depth_image"/>
   </node>
 
 </launch>

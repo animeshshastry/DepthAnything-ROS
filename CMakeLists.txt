@@ -115,8 +115,9 @@ rclcpp_components_register_node(depth_anything_node_component
   EXECUTABLE depth_anything_node
 )
 
+find_package(message_filters REQUIRED)
 # Create the executable
-add_executable(depth_align_node src/depth_align_node.cpp)
+add_executable(depth_align_node src/utils/depth_align_node.cpp)
 ament_target_dependencies(depth_align_node
   rclcpp
   sensor_msgs
@@ -127,6 +128,26 @@ ament_target_dependencies(depth_align_node
 # Install the node
 install(TARGETS
   depth_align_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+find_package(pcl_conversions REQUIRED)
+find_package(pcl_ros REQUIRED)
+find_package(rtabmap_conversions REQUIRED)
+add_executable(pointcloud_to_depthimage_node src/utils/pointcloud_to_depthimage_node.cpp)
+ament_target_dependencies(pointcloud_to_depthimage_node
+  rclcpp
+  sensor_msgs
+  cv_bridge
+  OpenCV
+  message_filters
+  pcl_conversions
+  pcl_ros
+  rtabmap_conversions
+)
+# Install the node
+install(TARGETS
+  pointcloud_to_depthimage_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
