@@ -2,13 +2,13 @@
 
   <arg name="name" default="quadrotor1" />
 
-  <!-- <arg name="input/image" default="/$(var name)/tracking_front/color/image_raw" />
+  <arg name="input/image" default="/$(var name)/tracking_front/color/image_raw" />
   <arg name="camera_info" default="/$(var name)/tracking_front/color/image_raw/camera_info" />
-  <arg name="camera_frame" default="$(var name)/tracking_front_frame" /> -->
+  <arg name="camera_frame" default="$(var name)/tracking_front_frame" />
 
-  <arg name="input/image" default="/$(var name)/RGBD/color/image_raw" />
+  <!-- <arg name="input/image" default="/$(var name)/RGBD/color/image_raw" />
   <arg name="camera_info" default="/$(var name)/RGBD/color/image_raw/camera_info" />
-  <arg name="camera_frame" default="$(var name)/RGBD_frame" />
+  <arg name="camera_frame" default="$(var name)/RGBD_frame" /> -->
 
   <arg name="output/depth_image" default="disparity" />
   <arg name="param_path" default="$(find-pkg-share depth_anything)/config/depth_anything.param.yaml" />
@@ -27,7 +27,7 @@
     <param name="onnx_path" value="$(var onnx_path)"/>
   </node>
 
-  <node pkg="depth_anything" exec="pointcloud_to_depthimage_node" name="pointcloud_to_depthimage" namespace="$(var name)/depth_anthing" output="screen">
+  <!-- <node pkg="depth_anything" exec="pointcloud_to_depthimage_node" name="pointcloud_to_depthimage" namespace="$(var name)/depth_anthing" output="screen">
     <remap from="cloud"               to="$(var cloud)"/>
     <remap from="camera_info"         to="$(var camera_info)"/>
     <remap from="depth_image"         to="$(var true_depth)"/>
@@ -37,6 +37,24 @@
     <param name="syncQueueSize"       value="10"/>
     <param name="topicQueueSize"      value="3"/>
     <param name="approx"              value="true"/>
+  </node> -->
+  
+  <node pkg="odom_synchronizer" exec="odom_synchronizer.py" name="odom_synchronizer_node" output="screen">
+    <param name="base_frame"            value="$(var name)/base_link"/>
+    <param name="odom_frame"            value="$(var name)/odom"/>
+    <remap from="odom"                  to="/$(var name)/odometry/local"/>
+    <remap from="image_raw"             to="$(var input/image)"/>
+    <remap from="synced_odom"           to="/$(var name)/synced_odom"/>
+  </node>
+
+  <node pkg="depth_anything" exec="pointcloud_to_depthimage_node_v2" name="pointcloud_to_depthimage" namespace="$(var name)/depth_anthing" output="screen">
+    <remap from="cloud"               to="$(var cloud)"/>
+    <remap from="camera_info"         to="$(var camera_info)"/>
+    <remap from="synced_odom"         to="/$(var name)/synced_odom"/>
+    <remap from="depth_image"         to="$(var true_depth)"/>
+    <param name="fixed_frame_id"      value="$(var name)/odom"/>
+    <param name="cam_frame_id"        value="$(var camera_frame)"/>
+    <param name="topicQueueSize"      value="3"/>
   </node>
 
   <node pkg="ov_msckf" exec="run_subscribe_msckf" name="open_vins" output="screen" namespace="$(var name)/openvins">

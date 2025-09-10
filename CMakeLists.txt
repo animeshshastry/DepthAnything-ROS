@@ -151,6 +151,26 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+find_package(nav_msgs REQUIRED)
+find_package(pcl_conversions REQUIRED)
+find_package(pcl_ros REQUIRED)
+add_executable(pointcloud_to_depthimage_node_v2 src/utils/pointcloud_to_depthimage_node_v2.cpp)
+ament_target_dependencies(pointcloud_to_depthimage_node_v2
+  rclcpp
+  sensor_msgs
+  nav_msgs
+  cv_bridge
+  OpenCV
+  message_filters
+  pcl_conversions
+  pcl_ros
+)
+# Install the node
+install(TARGETS
+  pointcloud_to_depthimage_node_v2
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Tests
 if(BUILD_TESTING)
   list(APPEND AMENT_LINT_AUTO_EXCLUDE ament_cmake_uncrustify)

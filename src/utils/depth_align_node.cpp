@@ -28,7 +28,7 @@ public:
             std::placeholders::_1, std::placeholders::_2));
 
         // Publisher
-        pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", rclcpp::QoS(1).reliability((rmw_qos_reliability_policy_t)1));
+        pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", 1);
     }
 
 private:
