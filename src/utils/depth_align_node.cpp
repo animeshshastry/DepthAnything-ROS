@@ -1,11 +1,22 @@
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/image.hpp>
+
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
+
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.hpp>
 #include <message_filters/sync_policies/exact_time.hpp>
 #include <message_filters/synchronizer.h>
+
+#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/filters/voxel_grid.h>
 
 class DepthAlignNode : public rclcpp::Node {
 public:
@@ -13,8 +24,18 @@ public:
 
         int syncQueueSize = 100;
         syncQueueSize = this->declare_parameter("sync_queue_size", syncQueueSize);
+        maxDepth = this->declare_parameter("max_depth", maxDepth);
+        pub_cloud = this->declare_parameter("pub_cloud", pub_cloud);
+        decimation = this->declare_parameter("decimation", decimation);
+        voxel_size = this->declare_parameter("voxel_size", voxel_size);
+
+        decimation = std::max<uint8_t>(1, decimation);
 
         // Setup subscribers
+        auto qos = rclcpp::QoS(10).reliable();
+        cameraInfoSub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>("depth_image/camera_info", qos, 
+						std::bind(&DepthAlignNode::cameraInfo_callback, this, std::placeholders::_1));
+
         sparse_sub_.subscribe(this, "sparse_topic", rmw_qos_profile_services_default);
         dense_sub_.subscribe(this, "dense_topic", rmw_qos_profile_services_default);
 
@@ -23,7 +44,8 @@ public:
         sync_->registerCallback(std::bind(&DepthAlignNode::callback, this, std::placeholders::_1, std::placeholders::_2));
 
         // Publisher
-        pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", 10);
+        depth_pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", 10);
+        if (pub_cloud) cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("depth/pointcloud", 10);
     }
 
 private:
@@ -33,7 +55,21 @@ private:
 
     message_filters::Subscriber<sensor_msgs::msg::Image> sparse_sub_, dense_sub_;
     std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
-    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_;
+    
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
+
+	rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr cameraInfoSub_;
+
+    bool pub_cloud = false;
+    float maxDepth = 100.0;
+    uint8_t decimation = 1;
+    float voxel_size = 0.0f;
+
+	bool camera_info_received_ = false;
+	double fx, fy, cx, cy, k1, k2, p1, p2, k3;
+	uint16_t width, height;
+    cv::Mat undist_map_;   // stores normalized coordinates (x = X/Z, y = Y/Z)
 
     void callback(const sensor_msgs::msg::Image::ConstSharedPtr& sparse_msg,
                   const sensor_msgs::msg::Image::ConstSharedPtr& dense_msg) {
@@ -47,17 +83,13 @@ private:
         cv::Mat dense;
         disp8.convertTo(dense, CV_32FC1); // avoid integer division
         dense = 1.0f / (dense + 1e-6f); // dense_depth
-        // dense.convertTo(dense, CV_16U);      // back to 16-bit unsigned
 
         std::vector<float> xs, ys;
-        // xs.reserve(sparse.rows * sparse.cols / 10); // heuristic
-        // ys.reserve(xs.size());
-
         for (uint16_t v = 0; v < sparse.rows; v++) {
             for (uint16_t u = 0; u < sparse.cols; u++) {
                 float d_sparse = sparse.at<float>(v, u);
                 float d_pred   = dense.at<float>(v, u);
-                if (d_sparse < 20.0f && d_sparse > 0.0f && d_pred > 0.0f) { // consider valid sparse points only
+                if (d_sparse < maxDepth && d_sparse > 0.0f && d_pred > 0.0f) { // consider valid sparse points only
                     ys.push_back(d_sparse);
                     xs.push_back(d_pred);
                 }
@@ -70,39 +102,155 @@ private:
             return;
         }
 
-        // // Mean values
-        // double mean_x = std::accumulate(xs.begin(), xs.end(), 0.0) / xs.size();
-        // double mean_y = std::accumulate(ys.begin(), ys.end(), 0.0) / ys.size();
-        // // Linear regression
-        // double num = 0.0, den = 0.0;
-        // for (size_t i = 0; i < xs.size(); i++) {
-        //     num += (xs[i] - mean_x) * (ys[i] - mean_y);
-        //     den += (xs[i] - mean_x) * (xs[i] - mean_x);
-        // }
-        // double s = (den > 1e-6) ? num / den : 1.0;
-        // double b = mean_y - s * mean_x;
-
         // Mean scaling
         double sum = 0.0;
         for (size_t i = 0; i < xs.size(); i++) {
             sum += ys[i]/xs[i];
         }
         double s = sum/xs.size();
-        double b = 0.0;
 
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                             "Scale: %.4f, Bias: %.4f (using %zu points)",
-                             s, b, xs.size());
+                             "Scale: %.4f, (using %zu points)",
+                             s, xs.size());
 
         // Apply correction
-        cv::Mat corrected = s * dense + b;
-
+        cv::Mat corrected = s * dense;
         corrected.convertTo(corrected, CV_32FC1);
+
+        // Set values greater than max depth to infinity
+        cv::Mat mask = corrected > maxDepth;
+        corrected.setTo(std::numeric_limits<float>::infinity(), mask);
 
         // Publish
         auto out_msg = cv_bridge::CvImage(dense_msg->header, "32FC1", corrected).toImageMsg();
-        pub_->publish(*out_msg);
+        depth_pub_->publish(*out_msg);
+
+        if (!pub_cloud) return;
+        auto cloud_msg = depthToPointCloud(corrected, dense_msg->header, decimation, voxel_size);
+        cloud_pub_->publish(cloud_msg);
     }
+
+    sensor_msgs::msg::PointCloud2 depthToPointCloud(
+        const cv::Mat &depth,
+        const std_msgs::msg::Header &header,
+        int decimation = 2,                 // e.g., keep 1/decimation of pixels
+        float voxel_size = 0.05f)           // voxel size in meters
+    {
+        // --- Step 1: Build raw pointcloud with decimation ---
+        sensor_msgs::msg::PointCloud2 cloud_msg;
+        cloud_msg.header = header;
+        // cloud_msg.height = depth.rows / decimation;
+        // cloud_msg.width  = depth.cols / decimation;
+        cloud_msg.height = (depth.rows + decimation - 1) / decimation;  // ceil division
+        cloud_msg.width  = (depth.cols + decimation - 1) / decimation;  // ceil division
+        cloud_msg.is_dense = false;
+
+        sensor_msgs::PointCloud2Modifier modifier(cloud_msg);
+        modifier.setPointCloud2FieldsByString(1, "xyz");
+        modifier.resize(cloud_msg.height * cloud_msg.width);
+
+        sensor_msgs::PointCloud2Iterator<float> iter_x(cloud_msg, "x");
+        sensor_msgs::PointCloud2Iterator<float> iter_y(cloud_msg, "y");
+        sensor_msgs::PointCloud2Iterator<float> iter_z(cloud_msg, "z");
+
+        for (int v = 0; v < depth.rows; v += decimation) {
+            for (int u = 0; u < depth.cols; u += decimation, ++iter_x, ++iter_y, ++iter_z) {
+                float Z = depth.at<float>(v, u);
+                if (!std::isfinite(Z) || Z <= 0.0f) {
+                    *iter_x = *iter_y = *iter_z = std::numeric_limits<float>::quiet_NaN();
+                    continue;
+                }
+
+                cv::Vec2f norm_xy = undist_map_.at<cv::Vec2f>(v, u);
+
+                *iter_x = norm_xy[0] * Z;
+                *iter_y = norm_xy[1] * Z;
+                *iter_z = Z;
+            }
+        }
+
+        if (!voxel_size || voxel_size <= 0.0f) {
+            return cloud_msg; // skip filtering
+        }
+
+        // --- Step 2: Apply voxel grid filtering (PCL) ---
+        pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+        pcl::fromROSMsg(cloud_msg, *pcl_cloud);
+
+        pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
+        voxel_filter.setInputCloud(pcl_cloud);
+        voxel_filter.setLeafSize(voxel_size, voxel_size, voxel_size);
+
+        pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>());
+        voxel_filter.filter(*pcl_cloud_filtered);
+
+        sensor_msgs::msg::PointCloud2 cloud_msg_filtered;
+        pcl::toROSMsg(*pcl_cloud_filtered, cloud_msg_filtered);
+        cloud_msg_filtered.header = header;
+
+        return cloud_msg_filtered;
+    }
+
+    void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info) {
+        if (!camera_info_received_) {
+            // --- Camera intrinsics ---
+            fx = cam_info->k[0];
+            fy = cam_info->k[4];
+            cx = cam_info->k[2];
+            cy = cam_info->k[5];
+
+            if (!cam_info->d.empty()) {
+                k1 = cam_info->d[0];
+                k2 = cam_info->d[1];
+                p1 = cam_info->d[2];
+                p2 = cam_info->d[3];
+                k3 = cam_info->d.size() > 4 ? cam_info->d[4] : 0.0;
+            }
+
+            width  = cam_info->width;
+            height = cam_info->height;
+
+            if (width == 0 || height == 0) {
+                RCLCPP_ERROR(this->get_logger(), "CameraInfo has invalid width/height: %u x %u", width, height);
+                return;
+            }
+
+            // --- Build undistortion map ---
+            std::vector<cv::Point2f> pts;
+            pts.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
+
+            for (int v = 0; v < height; v++) {
+                for (int u = 0; u < width; u++) {
+                    pts.emplace_back(static_cast<float>(u), static_cast<float>(v));
+                }
+            }
+
+            cv::Matx33d K(fx, 0, cx,
+                        0, fy, cy,
+                        0, 0, 1);
+
+            cv::Vec<double, 5> D(k1, k2, p1, p2, k3);
+
+            std::vector<cv::Point2f> undistorted_pts;
+            cv::undistortPoints(pts, undistorted_pts, K, D);
+
+            undist_map_ = cv::Mat(height, width, CV_32FC2);
+            int idx = 0;
+            for (int v = 0; v < height; v++) {
+                for (int u = 0; u < width; u++) {
+                    undist_map_.at<cv::Vec2f>(v, u) = cv::Vec2f(
+                        undistorted_pts[idx].x,
+                        undistorted_pts[idx].y
+                    );
+                    idx++;
+                }
+            }
+
+            RCLCPP_INFO(this->get_logger(), "Received camera info and built undistortion map.");
+            camera_info_received_ = true;
+        }
+    }
+
 };
 
 int main(int argc, char** argv) {

@@ -59,7 +59,11 @@ private:
 	tf2::Transform base_to_cam_;
 	bool base_to_cam_received_= false;
 
-	sensor_msgs::msg::CameraInfo cameraInfoMsg_static;
+	sensor_msgs::msg::CameraInfo cameraInfoMsg;
+	bool camera_info_received_ = false;
+	double fx, fy, cx, cy, k1, k2, p1, p2, k3;
+	uint16_t width, height;
+
 	pcl::PCLPointCloud2 cloud_aggregated;
 	std::string cloud_frame_id;
 
@@ -85,8 +89,29 @@ private:
 		cloud_msg = *pointCloud2Msg;
 	}
 
-	void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cameraInfoMsg) {
-		cameraInfoMsg_static = *cameraInfoMsg;
+	void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info) {
+		if (!camera_info_received_) {
+			// --- Camera intrinsics ---
+			fx = cam_info->k[0];
+			fy = cam_info->k[4];
+			cx = cam_info->k[2];
+			cy = cam_info->k[5];
+
+			if (!cam_info->d.empty()) {
+				k1 = cam_info->d[0];
+				k2 = cam_info->d[1];
+				p1 = cam_info->d[2];
+				p2 = cam_info->d[3];
+				k3 = cam_info->d.size() > 4 ? cam_info->d[4] : 0.0;
+			}
+
+			width  = cam_info->width;
+			height = cam_info->height;
+
+			RCLCPP_INFO(this->get_logger(), "Received camera info.");
+			camera_info_received_ = true;
+		}
+		cameraInfoMsg = *cam_info;
 	}
 
 	void odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr odomMsg) {
@@ -121,13 +146,12 @@ private:
 			// Compose odom->camera = odom->base_link * base_link->camera
 			tf2::Transform odom_to_cam = odom_to_base * base_to_cam_;
 
-			auto depthImage_msg = cloudToDepthImage(cloud_msg, odom_to_cam, cameraInfoMsg_static);
+			auto depthImage_msg = cloudToDepthImage(cloud_msg, odom_to_cam);
 			depthImage_msg->header = odomMsg->header;
 			depthImage_msg->header.frame_id = camFrameId_;
 			depthImagePub_->publish(*depthImage_msg);
 			if(cameraInfoPub_->get_subscription_count())
 			{
-				sensor_msgs::msg::CameraInfo cameraInfoMsg = cameraInfoMsg_static;
 				cameraInfoMsg.header = depthImage_msg->header;
 				cameraInfoPub_->publish(cameraInfoMsg);
 			}
@@ -136,24 +160,8 @@ private:
 
 	sensor_msgs::msg::Image::SharedPtr cloudToDepthImage(
 		const sensor_msgs::msg::PointCloud2 & cloud_in_odom,
-		const tf2::Transform & odom_to_cam,
-		const sensor_msgs::msg::CameraInfo & cam_info)
+		const tf2::Transform & odom_to_cam)
 	{
-		// --- Camera intrinsics ---
-		double fx = cam_info.k[0];
-		double fy = cam_info.k[4];
-		double cx = cam_info.k[2];
-		double cy = cam_info.k[5];
-
-		double k1 = cam_info.d[0];
-    	double k2 = cam_info.d[1];
-    	double p1 = cam_info.d[2];
-    	double p2 = cam_info.d[3];
-    	double k3 = cam_info.d[4];
-
-		uint16_t width = cam_info.width;
-		uint16_t height = cam_info.height;
-
 		// --- Initialize depth image (float32, meters) ---
 		// cv::Mat depth_image(height, width, CV_32FC1, std::numeric_limits<float>::quiet_NaN());
 		cv::Mat depth_image = cv::Mat::zeros(height, width, CV_16UC1); // depth in mm

@@ -116,6 +116,8 @@ rclcpp_components_register_node(depth_anything_node_component
 )
 
 find_package(message_filters REQUIRED)
+find_package(pcl_conversions REQUIRED)
+find_package(pcl_ros REQUIRED)
 # Create the executable
 add_executable(depth_align_node src/utils/depth_align_node.cpp)
 ament_target_dependencies(depth_align_node
@@ -124,6 +126,8 @@ ament_target_dependencies(depth_align_node
   cv_bridge
   OpenCV
   message_filters
+  pcl_conversions
+  pcl_ros
 )
 # Install the node
 install(TARGETS

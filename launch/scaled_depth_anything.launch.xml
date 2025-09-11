@@ -13,8 +13,8 @@
   <arg name="output/depth_image" default="disparity" />
   <arg name="param_path" default="$(find-pkg-share depth_anything)/config/depth_anything.param.yaml" />
   <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_vitb14.onnx" /> -->
-  <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vitb.onnx" />
-  <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vits.onnx" /> -->
+  <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vitb.onnx" /> -->
+  <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vits.onnx" />
 
   <arg name="cloud" default="/$(var name)/openvins/points_slam" />
 
@@ -72,17 +72,10 @@
     <remap from="dense_topic"           to="$(var output/depth_image)"/>
     <remap from="output_topic"          to="depth_image"/>
     <param name="sync_queue_size"       value="100"/>
+    <param name="max_depth"             value="40.0"/>
+    <param name="pub_cloud"             value="true"/>
+    <param name="decimation"           value="1"/>
+    <param name="voxel_size"           value="0.1"/>
   </node>
-
-  <!-- <node pkg="rtabmap_util" exec="point_cloud_xyz" name="point_cloud_xyz" output="screen">
-    <remap from="depth/image"         to="$(var name)/depth_anthing/depth_image"/>
-    <remap from="depth/camera_info"   to="$(var camera_info)"/>
-    <param name="approx_sync"         value="false"/>
-    <param name="qos_camera_info"     value="1"/>
-    <param name="max_depth"           value="20.0"/>
-    <param name="decimation"          value="4"/>
-    <param name="voxel_size"          value="0.2"/>
-    <param name="syncQueueSize"       value="30"/>
-  </node> -->
 
 </launch>
