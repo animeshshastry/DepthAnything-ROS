@@ -63,7 +63,7 @@ DepthAnythingNode::DepthAnythingNode(const rclcpp::NodeOptions & node_options)
     rmw_qos_profile_services_default);
 
   // Publisher
-  pub_depth_image_ = create_publisher<sensor_msgs::msg::Image>("~/output/depth_image", 1);
+  pub_depth_image_ = create_publisher<sensor_msgs::msg::Image>("~/output/depth_image", 10);
 
   // Init TensorRT model
   std::string calibType = "MinMax";

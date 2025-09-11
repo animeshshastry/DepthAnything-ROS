@@ -2,13 +2,13 @@
 
   <arg name="name" default="quadrotor1" />
 
-  <arg name="input/image" default="/$(var name)/tracking_front/color/image_raw" />
+  <!-- <arg name="input/image" default="/$(var name)/tracking_front/color/image_raw" />
   <arg name="camera_info" default="/$(var name)/tracking_front/color/image_raw/camera_info" />
-  <arg name="camera_frame" default="$(var name)/tracking_front_frame" />
+  <arg name="camera_frame" default="$(var name)/tracking_front_frame" /> -->
 
-  <!-- <arg name="input/image" default="/$(var name)/RGBD/color/image_raw" />
+  <arg name="input/image" default="/$(var name)/RGBD/color/image_raw" />
   <arg name="camera_info" default="/$(var name)/RGBD/color/image_raw/camera_info" />
-  <arg name="camera_frame" default="$(var name)/RGBD_frame" /> -->
+  <arg name="camera_frame" default="$(var name)/RGBD_frame" />
 
   <arg name="output/depth_image" default="disparity" />
   <arg name="param_path" default="$(find-pkg-share depth_anything)/config/depth_anything.param.yaml" />
@@ -54,7 +54,6 @@
     <remap from="depth_image"         to="$(var true_depth)"/>
     <param name="fixed_frame_id"      value="$(var name)/odom"/>
     <param name="cam_frame_id"        value="$(var camera_frame)"/>
-    <param name="topicQueueSize"      value="3"/>
   </node>
 
   <node pkg="ov_msckf" exec="run_subscribe_msckf" name="open_vins" output="screen" namespace="$(var name)/openvins">
@@ -69,9 +68,21 @@
   </node> 
 
   <node pkg="depth_anything" exec="depth_align_node" name="depth_anything" namespace="$(var name)/depth_anthing" output="screen">
-    <remap from="sparse_topic" to="$(var true_depth)"/>
-    <remap from="dense_topic" to="$(var output/depth_image)"/>
-    <remap from="output_topic" to="depth_image"/>
+    <remap from="sparse_topic"          to="$(var true_depth)"/>
+    <remap from="dense_topic"           to="$(var output/depth_image)"/>
+    <remap from="output_topic"          to="depth_image"/>
+    <param name="sync_queue_size"       value="100"/>
   </node>
+
+  <!-- <node pkg="rtabmap_util" exec="point_cloud_xyz" name="point_cloud_xyz" output="screen">
+    <remap from="depth/image"         to="$(var name)/depth_anthing/depth_image"/>
+    <remap from="depth/camera_info"   to="$(var camera_info)"/>
+    <param name="approx_sync"         value="false"/>
+    <param name="qos_camera_info"     value="1"/>
+    <param name="max_depth"           value="20.0"/>
+    <param name="decimation"          value="4"/>
+    <param name="voxel_size"          value="0.2"/>
+    <param name="syncQueueSize"       value="30"/>
+  </node> -->
 
 </launch>

@@ -23,13 +23,10 @@ public:
         tfBuffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tfListener_ = std::make_shared<tf2_ros::TransformListener>(*tfBuffer_);
 
-		int topicQueueSize = 1;
-
         fixedFrameId_ = this->declare_parameter("fixed_frame_id", fixedFrameId_);
 		camFrameId_ = this->declare_parameter("cam_frame_id", camFrameId_);
-        topicQueueSize = this->declare_parameter("topic_queue_size", topicQueueSize);
         
-		auto qos = rclcpp::QoS(topicQueueSize).reliable();
+		auto qos = rclcpp::QoS(10).reliable();
 
 		// Setup subscribers
 		pointCloudSub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>("cloud", qos, 
@@ -40,8 +37,8 @@ public:
 						std::bind(&pointcloud_to_depthimage_node::odom_callback, this, std::placeholders::_1));
 
         // Publisher
-		depthImagePub_ = this->create_publisher<sensor_msgs::msg::Image>("depth_image", 1);// 16 bits unsigned in mm
-		cameraInfoPub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("depth_image/camera_info", 1);
+		depthImagePub_ = this->create_publisher<sensor_msgs::msg::Image>("depth_image", 10);// 16 bits unsigned in mm
+		cameraInfoPub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>("depth_image/camera_info", 10);
     }
 
 private:

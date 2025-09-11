@@ -11,24 +11,19 @@ class DepthAlignNode : public rclcpp::Node {
 public:
     DepthAlignNode() : Node("depth_align_node") {
 
-        // QoS profile: Reliable + Keep last
-        rmw_qos_profile_t qos_profile = rmw_qos_profile_default;
-        qos_profile.reliability = RMW_QOS_POLICY_RELIABILITY_RELIABLE;
-        qos_profile.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
-        qos_profile.depth = 10;
+        int syncQueueSize = 100;
+        syncQueueSize = this->declare_parameter("sync_queue_size", syncQueueSize);
 
         // Setup subscribers
-        sparse_sub_.subscribe(this, "sparse_topic", qos_profile);
-        dense_sub_.subscribe(this, "dense_topic", qos_profile);
+        sparse_sub_.subscribe(this, "sparse_topic", rmw_qos_profile_services_default);
+        dense_sub_.subscribe(this, "dense_topic", rmw_qos_profile_services_default);
 
         // Synchronizer
-        sync_.reset(new message_filters::Synchronizer<SyncPolicy>(SyncPolicy(10), sparse_sub_, dense_sub_));
-        sync_->registerCallback(std::bind(
-            &DepthAlignNode::callback, this,
-            std::placeholders::_1, std::placeholders::_2));
+        sync_.reset(new message_filters::Synchronizer<SyncPolicy>(SyncPolicy(syncQueueSize), sparse_sub_, dense_sub_));
+        sync_->registerCallback(std::bind(&DepthAlignNode::callback, this, std::placeholders::_1, std::placeholders::_2));
 
         // Publisher
-        pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", 1);
+        pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", 10);
     }
 
 private:
