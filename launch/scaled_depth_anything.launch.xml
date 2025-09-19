@@ -70,10 +70,13 @@
   <node pkg="depth_anything" exec="depth_align_node" name="depth_anything" namespace="$(var name)/depth_anthing" output="screen">
     <remap from="sparse_topic"          to="$(var true_depth)"/>
     <remap from="dense_topic"           to="$(var output/depth_image)"/>
-    <remap from="output_topic"          to="depth_image"/>
+    <remap from="depth_image"           to="depth_image"/>
+    <remap from="depth/pointcloud"      to="pointcloud_registered"/>
     <param name="sync_queue_size"       value="100"/>
     <param name="max_depth"             value="40.0"/>
     <param name="pub_cloud"             value="true"/>
+    <param name="odom_frame_id"         value="$(var name)/odom"/>
+    <param name="duration"              value="0.5"/>
     <param name="decimation"           value="1"/>
     <param name="voxel_size"           value="0.1"/>
   </node>

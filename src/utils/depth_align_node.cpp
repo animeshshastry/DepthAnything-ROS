@@ -1,4 +1,9 @@
 #include <rclcpp/rclcpp.hpp>
+#include <optional>
+
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
@@ -22,10 +27,16 @@ class DepthAlignNode : public rclcpp::Node {
 public:
     DepthAlignNode() : Node("depth_align_node") {
 
+        // TF buffer and listener
+        tfBuffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+        tfListener_ = std::make_shared<tf2_ros::TransformListener>(*tfBuffer_);
+
         int syncQueueSize = 100;
         syncQueueSize = this->declare_parameter("sync_queue_size", syncQueueSize);
         maxDepth = this->declare_parameter("max_depth", maxDepth);
         pub_cloud = this->declare_parameter("pub_cloud", pub_cloud);
+        odom_frame_id = this->declare_parameter("odom_frame_id", odom_frame_id);
+        duration = this->declare_parameter("duration", duration);
         decimation = this->declare_parameter("decimation", decimation);
         voxel_size = this->declare_parameter("voxel_size", voxel_size);
 
@@ -44,7 +55,7 @@ public:
         sync_->registerCallback(std::bind(&DepthAlignNode::callback, this, std::placeholders::_1, std::placeholders::_2));
 
         // Publisher
-        depth_pub_ = this->create_publisher<sensor_msgs::msg::Image>("output_topic", 10);
+        depth_pub_ = this->create_publisher<sensor_msgs::msg::Image>("depth_image", 10);
         if (pub_cloud) cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("depth/pointcloud", 10);
     }
 
@@ -61,10 +72,15 @@ private:
 
 	rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr cameraInfoSub_;
 
+    std::shared_ptr<tf2_ros::Buffer> tfBuffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tfListener_;
+
     bool pub_cloud = false;
     float maxDepth = 100.0;
     uint8_t decimation = 1;
     float voxel_size = 0.0f;
+    std::string odom_frame_id = "odom";
+    float duration = 0.1;
 
 	bool camera_info_received_ = false;
 	double fx, fy, cx, cy, k1, k2, p1, p2, k3;
@@ -126,33 +142,54 @@ private:
         depth_pub_->publish(*out_msg);
 
         if (!pub_cloud) return;
-        auto cloud_msg = depthToPointCloud(corrected, dense_msg->header, decimation, voxel_size);
-        cloud_pub_->publish(cloud_msg);
+        auto cloud_msg = depthToPointCloud(corrected, dense_msg->header, odom_frame_id, duration, decimation, voxel_size);
+        if (cloud_msg) cloud_pub_->publish(*cloud_msg);
     }
 
-    sensor_msgs::msg::PointCloud2 depthToPointCloud(
+    std::optional<sensor_msgs::msg::PointCloud2> depthToPointCloud(
         const cv::Mat &depth,
         const std_msgs::msg::Header &header,
-        int decimation = 2,                 // e.g., keep 1/decimation of pixels
-        float voxel_size = 0.05f)           // voxel size in meters
+        const std::string &odom_frame_id,
+        const float duration = 0.1,
+        const int decimation = 2,
+        const float voxel_size = 0.05f)
     {
-        // --- Step 1: Build raw pointcloud with decimation ---
+        // --- Step 1: Get transform ---
+        geometry_msgs::msg::TransformStamped transform_stamped;
+        try {
+            transform_stamped = tfBuffer_->lookupTransform(
+                header.frame_id, odom_frame_id, header.stamp, tf2::durationFromSec(duration));
+        }
+        catch (tf2::TransformException &ex) {
+            RCLCPP_WARN(rclcpp::get_logger("depthToPointCloud"),
+                        "No transform %s -> %s: %s",
+                        header.frame_id.c_str(), odom_frame_id.c_str(), ex.what());
+            return std::nullopt; // nothing to publish
+        }
+    
+        // Convert to tf2::Transform for fast math
+        tf2::Transform tf_cam_to_odom;
+        tf2::fromMsg(transform_stamped.transform, tf_cam_to_odom);
+        tf_cam_to_odom = tf_cam_to_odom.inverse();
+
+        // --- Step 2: Allocate cloud in odom frame ---
         sensor_msgs::msg::PointCloud2 cloud_msg;
         cloud_msg.header = header;
-        // cloud_msg.height = depth.rows / decimation;
-        // cloud_msg.width  = depth.cols / decimation;
-        cloud_msg.height = (depth.rows + decimation - 1) / decimation;  // ceil division
-        cloud_msg.width  = (depth.cols + decimation - 1) / decimation;  // ceil division
+        cloud_msg.header.frame_id = odom_frame_id; // directly output in odom
+    
+        cloud_msg.height = (depth.rows + decimation - 1) / decimation;
+        cloud_msg.width  = (depth.cols + decimation - 1) / decimation;
         cloud_msg.is_dense = false;
-
+    
         sensor_msgs::PointCloud2Modifier modifier(cloud_msg);
         modifier.setPointCloud2FieldsByString(1, "xyz");
         modifier.resize(cloud_msg.height * cloud_msg.width);
-
+    
         sensor_msgs::PointCloud2Iterator<float> iter_x(cloud_msg, "x");
         sensor_msgs::PointCloud2Iterator<float> iter_y(cloud_msg, "y");
         sensor_msgs::PointCloud2Iterator<float> iter_z(cloud_msg, "z");
-
+    
+        // --- Step 3: Generate transformed points directly ---
         for (int v = 0; v < depth.rows; v += decimation) {
             for (int u = 0; u < depth.cols; u += decimation, ++iter_x, ++iter_y, ++iter_z) {
                 float Z = depth.at<float>(v, u);
@@ -160,12 +197,17 @@ private:
                     *iter_x = *iter_y = *iter_z = std::numeric_limits<float>::quiet_NaN();
                     continue;
                 }
-
+    
                 cv::Vec2f norm_xy = undist_map_.at<cv::Vec2f>(v, u);
-
-                *iter_x = norm_xy[0] * Z;
-                *iter_y = norm_xy[1] * Z;
-                *iter_z = Z;
+                tf2::Vector3 pt_cam(norm_xy[0] * Z, norm_xy[1] * Z, Z);
+    
+                // Apply transform once
+                tf2::Vector3 pt_odom = tf_cam_to_odom * pt_cam;
+                // tf2::Vector3 pt_odom = pt_cam;
+    
+                *iter_x = pt_odom.x();
+                *iter_y = pt_odom.y();
+                *iter_z = pt_odom.z();
             }
         }
 
@@ -186,7 +228,7 @@ private:
 
         sensor_msgs::msg::PointCloud2 cloud_msg_filtered;
         pcl::toROSMsg(*pcl_cloud_filtered, cloud_msg_filtered);
-        cloud_msg_filtered.header = header;
+        cloud_msg_filtered.header = cloud_msg.header;
 
         return cloud_msg_filtered;
     }

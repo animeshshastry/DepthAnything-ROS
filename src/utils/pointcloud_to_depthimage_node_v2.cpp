@@ -145,6 +145,7 @@ private:
 
 			// Compose odom->camera = odom->base_link * base_link->camera
 			tf2::Transform odom_to_cam = odom_to_base * base_to_cam_;
+			odom_to_cam = odom_to_cam.inverse();
 
 			auto depthImage_msg = cloudToDepthImage(cloud_msg, odom_to_cam);
 			depthImage_msg->header = odomMsg->header;
@@ -174,7 +175,7 @@ private:
 		for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z)
 		{
 			tf2::Vector3 p_odom(*iter_x, *iter_y, *iter_z);
-			tf2::Vector3 p_cam = odom_to_cam.inverse() * p_odom;
+			tf2::Vector3 p_cam = odom_to_cam * p_odom;
 
 			if (p_cam.z() > 0.0)
 			{
