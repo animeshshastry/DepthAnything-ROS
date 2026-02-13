@@ -115,6 +115,7 @@ rclcpp_components_register_node(depth_anything_node_component
   EXECUTABLE depth_anything_node
 )
 
+find_package(OpenMP REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)

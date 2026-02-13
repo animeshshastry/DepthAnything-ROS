@@ -22,6 +22,10 @@
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+
+#include <pcl/kdtree/kdtree_flann.h>
+#include <omp.h> // Include OpenMP header
 
 class DepthAlignNode : public rclcpp::Node {
 public:
@@ -39,6 +43,9 @@ public:
         duration = this->declare_parameter("duration", duration);
         decimation = this->declare_parameter("decimation", decimation);
         voxel_size = this->declare_parameter("voxel_size", voxel_size);
+        enable_sor = this->declare_parameter("enable_sor_filter", enable_sor);
+        mean_k = this->declare_parameter("sor_mean_k", mean_k);
+        stddev_thresh = this->declare_parameter("sor_stddev_thresh", stddev_thresh);
 
         decimation = std::max<uint8_t>(1, decimation);
 
@@ -81,6 +88,9 @@ private:
     float voxel_size = 0.0f;
     std::string odom_frame_id = "odom";
     float duration = 0.1;
+    bool enable_sor = false;
+    uint8_t mean_k = 50;
+    double stddev_thresh = 0.1;
 
 	bool camera_info_received_ = false;
 	double fx, fy, cx, cy, k1, k2, p1, p2, k3;
@@ -223,14 +233,30 @@ private:
         voxel_filter.setInputCloud(pcl_cloud);
         voxel_filter.setLeafSize(voxel_size, voxel_size, voxel_size);
 
-        pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>());
-        voxel_filter.filter(*pcl_cloud_filtered);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_voxeled(new pcl::PointCloud<pcl::PointXYZ>());
+        voxel_filter.filter(*pcl_voxeled);
 
-        sensor_msgs::msg::PointCloud2 cloud_msg_filtered;
-        pcl::toROSMsg(*pcl_cloud_filtered, cloud_msg_filtered);
-        cloud_msg_filtered.header = cloud_msg.header;
+        sensor_msgs::msg::PointCloud2 output;
 
-        return cloud_msg_filtered;
+        if (enable_sor){
+            pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+            sor.setInputCloud(pcl_voxeled);
+            sor.setMeanK(mean_k);
+            sor.setStddevMulThresh(stddev_thresh);
+            pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_filtered(new pcl::PointCloud<pcl::PointXYZ>());
+
+            sor.filter(*pcl_filtered);
+            // parallel_sor(pcl_voxeled, pcl_filtered, mean_k, stddev_thresh); // not really any improvement noticed over the default on PC
+
+            pcl::toROSMsg(*pcl_filtered, output);
+        }
+        else{
+            pcl::toROSMsg(*pcl_voxeled, output);
+        }
+
+        output.header = cloud_msg.header;
+
+        return output;
     }
 
     void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info) {
@@ -290,6 +316,56 @@ private:
 
             RCLCPP_INFO(this->get_logger(), "Received camera info and built undistortion map.");
             camera_info_received_ = true;
+        }
+    }
+
+    void parallel_sor(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud, 
+                        pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_filtered, 
+                        uint8_t mean_k, float stddev_thresh) {
+
+        // Create a k-d tree for efficient nearest neighbor searches
+        pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+        kdtree.setInputCloud(cloud);
+
+        // Store the mean distances for each point
+        std::vector<double> mean_distances(cloud->size());
+
+        // --- Step 1: Parallel computation of mean distances ---
+        #pragma omp parallel for
+        for (size_t i = 0; i < cloud->size(); ++i) {
+            std::vector<int> point_idx_neighbors(mean_k);
+            std::vector<float> point_sq_distances(mean_k);
+
+            // Find the k nearest neighbors
+            if (kdtree.nearestKSearch(cloud->points[i], mean_k, point_idx_neighbors, point_sq_distances) > 0) {
+                double total_distance = 0.0;
+                for (size_t j = 0; j < point_sq_distances.size(); ++j) {
+                    total_distance += std::sqrt(point_sq_distances[j]);
+                }
+                mean_distances[i] = total_distance / mean_k;
+            }
+        }
+
+        // --- Step 2: Compute global mean and standard deviation ---
+        double global_sum = std::accumulate(mean_distances.begin(), mean_distances.end(), 0.0);
+        double global_mean = global_sum / mean_distances.size();
+
+        double global_sq_diff_sum = 0.0;
+        for (double dist : mean_distances) {
+            global_sq_diff_sum += (dist - global_mean) * (dist - global_mean);
+        }
+        double global_stddev = std::sqrt(global_sq_diff_sum / mean_distances.size());
+
+        double distance_threshold = global_mean + stddev_thresh * global_stddev;
+
+        // --- Step 3: Classify points as inliers or outliers ---
+        // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+        cloud_filtered->reserve(cloud->size()); // Pre-allocate memory
+
+        for (size_t i = 0; i < cloud->size(); ++i) {
+            if (mean_distances[i] < distance_threshold) {
+                cloud_filtered->push_back(cloud->points[i]);
+            }
         }
     }
 
