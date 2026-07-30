@@ -1,0 +1,24 @@
+<launch>
+
+  <!-- ================= Arguments ================= -->
+  <arg name="calibration_file"  default="$(find-pkg-share depth_anything)/config/calib_01-camchain.yaml" description="Path to Kalibr camchain.yaml"/>
+  <arg name="camera_name"       default="cam0"                description="Kalibr camera key in the yaml (cam0, cam1, ...)"/>
+  <arg name="camera_ns"         default="hires_front_color"    description="Namespace under which camera_info/image_rect live"/>
+  <arg name="input_image_topic" default="/hires_front_color"   description="Raw image topic actually published by the bag"/>
+
+  <!-- ================= CameraInfo publisher ================= -->
+  <node pkg="depth_anything" exec="camera_preprocessor_node" name="camera_preprocessor" namespace="$(var camera_ns)">
+    <param name="calibration_file" value="$(var calibration_file)"/>
+    <param name="camera_name" value="$(var camera_name)"/>
+    <param name="image_topic" value="$(var input_image_topic)"/>
+    <param name="camera_info_topic" value="camera_info"/>
+    <param name="alpha" value="1.0"/>
+    <param name="convert_yuv422_to_bgr" value="true"/>
+    <param name="yuv_variant" value="uyvy"/>
+    <param name="image_yuv_topic" value="image_raw_bgr"/>
+    <param name="rectify" value="true"/>
+    <param name="image_rect_topic" value="image_rect"/>
+    <param name="crop_bottom_rows" value="1"/>  <!-- increase if a green line persists -->
+  </node>
+
+</launch>

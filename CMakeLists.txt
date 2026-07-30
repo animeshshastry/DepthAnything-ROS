@@ -176,6 +176,31 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+find_package(OpenCV REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
+add_executable(camera_preprocessor_node src/utils/camera_preprocessor_node.cpp)
+ament_target_dependencies(camera_preprocessor_node
+  rclcpp
+  sensor_msgs
+  OpenCV
+)
+
+if(TARGET yaml-cpp::yaml-cpp)
+  # yaml-cpp >= 0.8
+  target_link_libraries(camera_preprocessor_node yaml-cpp::yaml-cpp ${OpenCV_LIBS})
+else()
+  # yaml-cpp 0.6 / 0.7 (typical apt package on Humble/Jazzy)
+  target_include_directories(camera_preprocessor_node PUBLIC ${YAML_CPP_INCLUDE_DIR} ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(camera_preprocessor_node ${YAML_CPP_LIBRARIES} ${OpenCV_LIBS})
+endif()
+
+# Install the node
+install(TARGETS
+  camera_preprocessor_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Tests
 if(BUILD_TESTING)
   list(APPEND AMENT_LINT_AUTO_EXCLUDE ament_cmake_uncrustify)

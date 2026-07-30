@@ -1,0 +1,8 @@
+cam0:
+  cam_overlaps: []
+  camera_model: pinhole
+  distortion_coeffs: [-0.012209512384191299, -0.020300655558290984, 0.014141696138068167, -0.004407406243101682]
+  distortion_model: equidistant
+  intrinsics: [511.16570757836854, 509.0842963397246, 516.2070390948736, 390.97103040195407]
+  resolution: [1024, 768]
+  rostopic: /hires_front_grey
