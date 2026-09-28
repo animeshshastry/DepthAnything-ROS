@@ -26,14 +26,15 @@ public:
         fixedFrameId_ = this->declare_parameter("fixed_frame_id", fixedFrameId_);
 		camFrameId_ = this->declare_parameter("cam_frame_id", camFrameId_);
         
-		auto qos = rclcpp::QoS(10).reliable();
+		auto qos_reliable = rclcpp::QoS(10).reliable();
+		auto qos_best_effort = rclcpp::QoS(10).best_effort();
 
 		// Setup subscribers
-		pointCloudSub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>("cloud", qos, 
+		pointCloudSub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>("cloud", qos_best_effort, 
 						std::bind(&pointcloud_to_depthimage_node::pointCloud_callback, this, std::placeholders::_1));
-		cameraInfoSub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>("camera_info", qos, 
+		cameraInfoSub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>("camera_info", qos_reliable, 
 						std::bind(&pointcloud_to_depthimage_node::cameraInfo_callback, this, std::placeholders::_1));
-    	odomSub_ = this->create_subscription<nav_msgs::msg::Odometry>("synced_odom", qos, 
+    	odomSub_ = this->create_subscription<nav_msgs::msg::Odometry>("synced_odom", qos_reliable, 
 						std::bind(&pointcloud_to_depthimage_node::odom_callback, this, std::placeholders::_1));
 
         // Publisher
@@ -92,18 +93,10 @@ private:
 	void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info) {
 		if (!camera_info_received_) {
 			// --- Camera intrinsics ---
-			fx = cam_info->k[0];
-			fy = cam_info->k[4];
-			cx = cam_info->k[2];
-			cy = cam_info->k[5];
-
-			if (!cam_info->d.empty()) {
-				k1 = cam_info->d[0];
-				k2 = cam_info->d[1];
-				p1 = cam_info->d[2];
-				p2 = cam_info->d[3];
-				k3 = cam_info->d.size() > 4 ? cam_info->d[4] : 0.0;
-			}
+			fx = cam_info->p[0];
+			fy = cam_info->p[5];
+			cx = cam_info->p[2];
+			cy = cam_info->p[6];
 
 			width  = cam_info->width;
 			height = cam_info->height;
@@ -113,6 +106,31 @@ private:
 		}
 		cameraInfoMsg = *cam_info;
 	}
+
+	// void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info) {
+	// 	if (!camera_info_received_) {
+	// 		// --- Camera intrinsics ---
+	// 		fx = cam_info->k[0];
+	// 		fy = cam_info->k[4];
+	// 		cx = cam_info->k[2];
+	// 		cy = cam_info->k[5];
+
+	// 		if (!cam_info->d.empty()) {
+	// 			k1 = cam_info->d[0];
+	// 			k2 = cam_info->d[1];
+	// 			p1 = cam_info->d[2];
+	// 			p2 = cam_info->d[3];
+	// 			k3 = cam_info->d.size() > 4 ? cam_info->d[4] : 0.0;
+	// 		}
+
+	// 		width  = cam_info->width;
+	// 		height = cam_info->height;
+
+	// 		RCLCPP_INFO(this->get_logger(), "Received camera info.");
+	// 		camera_info_received_ = true;
+	// 	}
+	// 	cameraInfoMsg = *cam_info;
+	// }
 
 	void odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr odomMsg) {
 		
@@ -135,6 +153,12 @@ private:
 				"Waiting for base_link->camera_link TF: %s", ex.what());
 				return;
 			}
+		}
+
+		if (!camera_info_received_) {
+			RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+				"Waiting for camera info.");
+			return;
 		}
 
 		if(depthImagePub_->get_subscription_count() > 0)
@@ -179,17 +203,18 @@ private:
 
 			if (p_cam.z() > 0.0)
 			{
-				double x = p_cam.x() / p_cam.z();
-				double y = p_cam.y() / p_cam.z();
-				double r2 = x*x + y*y;
-				double x_distorted = x*(1.0 + k1*r2 + k2*r2*r2 + k3*r2*r2*r2) + 2.0*p1*x*y + p2*(r2 + 2.0*x*x);
-				double y_distorted = y*(1.0 + k1*r2 + k2*r2*r2 + k3*r2*r2*r2) + p1*(r2 + 2.0*y*y) + 2.0*p2*x*y;
+				// double x = p_cam.x() / p_cam.z();
+				// double y = p_cam.y() / p_cam.z();
+				// double r2 = x*x + y*y;
+				// double x_distorted = x*(1.0 + k1*r2 + k2*r2*r2 + k3*r2*r2*r2) + 2.0*p1*x*y + p2*(r2 + 2.0*x*x);
+				// double y_distorted = y*(1.0 + k1*r2 + k2*r2*r2 + k3*r2*r2*r2) + p1*(r2 + 2.0*y*y) + 2.0*p2*x*y;
 
-				uint16_t u = static_cast<uint16_t>(fx * x_distorted + cx);
-				uint16_t v = static_cast<uint16_t>(fy * y_distorted + cy);
+				// uint16_t u = static_cast<uint16_t>(fx * x_distorted + cx);
+				// uint16_t v = static_cast<uint16_t>(fy * y_distorted + cy);
 
-				// uint16_t u = static_cast<uint16_t>(fx * (p_cam.x() / p_cam.z()) + cx);
-				// uint16_t v = static_cast<uint16_t>(fy * (p_cam.y() / p_cam.z()) + cy);
+				//// already rectified image
+				uint16_t u = static_cast<uint16_t>(fx * (p_cam.x() / p_cam.z()) + cx);
+				uint16_t v = static_cast<uint16_t>(fy * (p_cam.y() / p_cam.z()) + cy);
 
 				if (u >= 0 && u < width && v >= 0 && v < height)
 				{

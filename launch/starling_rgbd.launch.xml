@@ -1,0 +1,99 @@
+<launch>
+
+  <arg name="name" default="quadrotor1" />
+  
+  <!-- ================= Arguments ================= -->
+  <arg name="calibration_file"  default="$(find-pkg-share depth_anything)/config/calib_01-camchain.yaml" description="Path to Kalibr camchain.yaml"/>
+  <arg name="camera_name"       default="cam0"                description="Kalibr camera key in the yaml (cam0, cam1, ...)"/>
+  <arg name="camera_ns"         default="hires_front_color"    description="Namespace under which camera_info/image_rect live"/>
+  <arg name="input_image_topic" default="/hires_front_color"   description="Raw image topic actually published by the bag"/>
+
+  <arg name="RGBD_color_image_topic" default="/$(var name)/RGBD/color/image_raw" />
+  <arg name="RGBD_camera_info_topic" default="/$(var name)/RGBD/color/image_raw/camera_info" />
+  <arg name="RGBD_depth_image_topic" default="/$(var name)/RGBD/depth/image_raw" />
+
+  <arg name="odometry_topic" default="/ov_extended/odom" />
+
+  <!-- <arg name="camera_frame" default="$(var name)/RGBD_frame" /> -->
+  <!-- <arg name="odom_frame" default="$(var name)/odom" /> -->
+  <!-- <arg name="base_frame" default="$(var name)/base_link" /> -->
+  <arg name="camera_frame" default="RGBD_frame" />
+  <arg name="odom_frame" default="odom" />
+  <arg name="base_frame" default="base_link" />
+
+  <arg name="param_path" default="$(find-pkg-share depth_anything)/config/depth_anything.param.yaml" />
+  <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_vitb14.onnx" /> -->
+  <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vitb.onnx" />
+  <!-- <arg name="onnx_path" default="$(find-pkg-share depth_anything)/models/depth_anything_v2_vits.onnx" /> -->
+
+  <arg name="cloud" default="/ov_extended/pc" />
+  <arg name="true_depth" default="sparse_depth" />
+
+  <!-- ================= Publish static camera to base_link transform ================= -->
+  <node
+    pkg="tf2_ros"
+    exec="static_transform_publisher"
+    name="static_transform_broadcaster"
+    output="screen"
+    args="--x 0.05 --y 0.0 --z 0.0 --qx -0.5 --qy 0.5 --qz -0.5 --qw 0.5 --frame-id $(var base_frame) --child-frame-id $(var camera_frame)"
+  />
+
+  <!-- ================= CameraInfo publisher ================= -->
+  <node pkg="depth_anything" exec="camera_preprocessor_node" name="camera_preprocessor" namespace="$(var camera_ns)">
+    <param name="calibration_file" value="$(var calibration_file)"/>
+    <param name="camera_name" value="$(var camera_name)"/>
+    <param name="image_topic" value="$(var input_image_topic)"/>
+    <param name="camera_info_topic" value="$(var RGBD_camera_info_topic)"/>
+    <param name="frame_id" value="$(var camera_frame)"/>
+    <param name="alpha" value="0.0"/>
+    <param name="convert_yuv422_to_bgr" value="true"/>
+    <param name="yuv_variant" value="uyvy"/>
+    <param name="image_yuv_topic" value="image_raw_bgr"/>
+    <param name="rectify" value="true"/>
+    <param name="image_rect_topic" value="$(var RGBD_color_image_topic)"/>
+    <param name="crop_bottom_rows" value="1"/>  <!-- increase if a green line persists -->
+  </node>
+
+  <node pkg="depth_anything" exec="depth_anything_node" name="depth_anything" namespace="$(var name)/depth_anthing" output="screen">
+    <remap from="~/input/image" to="$(var RGBD_color_image_topic)"/>
+    <remap from="~/output/depth_image" to="disparity"/>
+    <param from="$(var param_path)" />
+    <param name="onnx_path" value="$(var onnx_path)"/>
+  </node>
+
+  <node pkg="depth_anything" exec="odom_synchronizer.py" name="odom_synchronizer_node" output="screen">
+    <param name="base_frame"            value="$(var base_frame)"/>
+    <param name="odom_frame"            value="$(var odom_frame)"/>
+    <param name="pub_tf"                value="true"/>
+    <remap from="odom"                  to="$(var odometry_topic)"/>
+    <remap from="image_raw"             to="$(var RGBD_color_image_topic)"/>
+    <remap from="synced_odom"           to="/$(var name)/synced_odom"/>
+  </node>
+
+  <node pkg="depth_anything" exec="pointcloud_to_depthimage_node_v2" name="pointcloud_to_depthimage" namespace="$(var name)/depth_anthing" output="screen">
+    <remap from="cloud"               to="$(var cloud)"/>
+    <remap from="camera_info"         to="$(var RGBD_camera_info_topic)"/>
+    <remap from="synced_odom"         to="/$(var name)/synced_odom"/>
+    <remap from="depth_image"         to="$(var true_depth)"/>
+    <param name="fixed_frame_id"      value="$(var odom_frame)"/>
+    <param name="cam_frame_id"        value="$(var camera_frame)"/>
+  </node>
+
+  <node pkg="depth_anything" exec="depth_align_node" name="depth_anything" namespace="$(var name)/depth_anthing" output="screen">
+    <remap from="sparse_topic"          to="$(var true_depth)"/>
+    <remap from="dense_topic"           to="disparity"/>
+    <remap from="depth_image"           to="$(var RGBD_depth_image_topic)"/>
+    <remap from="depth/pointcloud"      to="pointcloud_registered"/>
+    <param name="sync_queue_size"       value="100"/>
+    <param name="max_depth"             value="10.0"/>
+    <param name="pub_cloud"             value="true"/>
+    <param name="odom_frame_id"         value="$(var odom_frame)"/>
+    <param name="duration"              value="0.5"/>
+    <param name="decimation"            value="1"/>
+    <param name="voxel_size"            value="0.3"/>
+    <param name="enable_sor_filter"     value="true"/>
+    <param name="mean_k"                value="50"/>
+    <param name="stddev_thresh"         value="0.000000001"/>
+  </node>
+
+</launch>

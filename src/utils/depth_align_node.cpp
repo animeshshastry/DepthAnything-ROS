@@ -110,7 +110,7 @@ private:
         disp8.convertTo(dense, CV_32FC1); // avoid integer division
         dense = 1.0f / (dense + 1e-6f); // dense_depth
 
-        std::vector<float> xs, ys;
+        std::vector<float> xs, ys, weight;
         for (uint16_t v = 0; v < sparse.rows; v++) {
             for (uint16_t u = 0; u < sparse.cols; u++) {
                 float d_sparse = sparse.at<float>(v, u);
@@ -118,6 +118,13 @@ private:
                 if (d_sparse < maxDepth && d_sparse > 0.0f && d_pred > 0.0f) { // consider valid sparse points only
                     ys.push_back(d_sparse);
                     xs.push_back(d_pred);
+
+                    //// equal weight
+                    // weight.push_back(1.0f);
+
+                    //// radial weight from center of image
+                    float r2 = (u - cx)*(u - cx) + (v - cy)*(v - cy);
+                    weight.push_back(1.0f / (1.0f + r2 / 10000.0f));
                 }
             }
         }
@@ -128,12 +135,13 @@ private:
             return;
         }
 
-        // Mean scaling
+        // Weighted Mean scaling
         double sum = 0.0;
         for (size_t i = 0; i < xs.size(); i++) {
-            sum += ys[i]/xs[i];
+            sum += (ys[i]/xs[i]) * weight[i];
         }
-        double s = sum/xs.size();
+        // double s = sum/xs.size();
+        double s = sum / std::accumulate(weight.begin(), weight.end(), 0.0);
 
         RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
                              "Scale: %.4f, (using %zu points)",
@@ -152,6 +160,11 @@ private:
         depth_pub_->publish(*out_msg);
 
         if (!pub_cloud) return;
+        if (!camera_info_received_) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                "Waiting for depth camera info.");
+            return;
+        }
         auto cloud_msg = depthToPointCloud(corrected, dense_msg->header, odom_frame_id, duration, decimation, voxel_size);
         if (cloud_msg) cloud_pub_->publish(*cloud_msg);
     }
@@ -185,6 +198,7 @@ private:
         // --- Step 2: Allocate cloud in odom frame ---
         sensor_msgs::msg::PointCloud2 cloud_msg;
         cloud_msg.header = header;
+        // cloud_msg.header.frame_id = header.frame_id; // camera frame id for debugging
         cloud_msg.header.frame_id = odom_frame_id; // directly output in odom
     
         cloud_msg.height = (depth.rows + decimation - 1) / decimation;
@@ -208,8 +222,10 @@ private:
                     continue;
                 }
     
-                cv::Vec2f norm_xy = undist_map_.at<cv::Vec2f>(v, u);
-                tf2::Vector3 pt_cam(norm_xy[0] * Z, norm_xy[1] * Z, Z);
+                // cv::Vec2f norm_xy = undist_map_.at<cv::Vec2f>(v, u);
+                // tf2::Vector3 pt_cam(norm_xy[0] * Z, norm_xy[1] * Z, Z);
+
+                tf2::Vector3 pt_cam((u - cx) * Z / fx, (v - cy) * Z / fy, Z); // undistorted coordinates
     
                 // Apply transform once
                 tf2::Vector3 pt_odom = tf_cam_to_odom * pt_cam;
@@ -261,63 +277,75 @@ private:
 
     void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info) {
         if (!camera_info_received_) {
-            // --- Camera intrinsics ---
-            fx = cam_info->k[0];
-            fy = cam_info->k[4];
-            cx = cam_info->k[2];
-            cy = cam_info->k[5];
-
-            if (!cam_info->d.empty()) {
-                k1 = cam_info->d[0];
-                k2 = cam_info->d[1];
-                p1 = cam_info->d[2];
-                p2 = cam_info->d[3];
-                k3 = cam_info->d.size() > 4 ? cam_info->d[4] : 0.0;
-            }
-
-            width  = cam_info->width;
-            height = cam_info->height;
-
-            if (width == 0 || height == 0) {
-                RCLCPP_ERROR(this->get_logger(), "CameraInfo has invalid width/height: %u x %u", width, height);
-                return;
-            }
-
-            // --- Build undistortion map ---
-            std::vector<cv::Point2f> pts;
-            pts.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
-
-            for (int v = 0; v < height; v++) {
-                for (int u = 0; u < width; u++) {
-                    pts.emplace_back(static_cast<float>(u), static_cast<float>(v));
-                }
-            }
-
-            cv::Matx33d K(fx, 0, cx,
-                        0, fy, cy,
-                        0, 0, 1);
-
-            cv::Vec<double, 5> D(k1, k2, p1, p2, k3);
-
-            std::vector<cv::Point2f> undistorted_pts;
-            cv::undistortPoints(pts, undistorted_pts, K, D);
-
-            undist_map_ = cv::Mat(height, width, CV_32FC2);
-            int idx = 0;
-            for (int v = 0; v < height; v++) {
-                for (int u = 0; u < width; u++) {
-                    undist_map_.at<cv::Vec2f>(v, u) = cv::Vec2f(
-                        undistorted_pts[idx].x,
-                        undistorted_pts[idx].y
-                    );
-                    idx++;
-                }
-            }
-
-            RCLCPP_INFO(this->get_logger(), "Received camera info and built undistortion map.");
+            // --- Camera projection ---
+            fx = cam_info->p[0];
+            fy = cam_info->p[5];
+            cx = cam_info->p[2];
+            cy = cam_info->p[6];
+            RCLCPP_INFO(this->get_logger(), "Received camera info projection");
             camera_info_received_ = true;
         }
     }
+
+    // void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info) {
+    //     if (!camera_info_received_) {
+    //         // --- Camera intrinsics ---
+    //         fx = cam_info->k[0];
+    //         fy = cam_info->k[4];
+    //         cx = cam_info->k[2];
+    //         cy = cam_info->k[5];
+
+    //         if (!cam_info->d.empty()) {
+    //             k1 = cam_info->d[0];
+    //             k2 = cam_info->d[1];
+    //             p1 = cam_info->d[2];
+    //             p2 = cam_info->d[3];
+    //             k3 = cam_info->d.size() > 4 ? cam_info->d[4] : 0.0;
+    //         }
+
+    //         width  = cam_info->width;
+    //         height = cam_info->height;
+
+    //         if (width == 0 || height == 0) {
+    //             RCLCPP_ERROR(this->get_logger(), "CameraInfo has invalid width/height: %u x %u", width, height);
+    //             return;
+    //         }
+
+    //         // --- Build undistortion map ---
+    //         std::vector<cv::Point2f> pts;
+    //         pts.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
+
+    //         for (int v = 0; v < height; v++) {
+    //             for (int u = 0; u < width; u++) {
+    //                 pts.emplace_back(static_cast<float>(u), static_cast<float>(v));
+    //             }
+    //         }
+
+    //         cv::Matx33d K(fx, 0, cx,
+    //                     0, fy, cy,
+    //                     0, 0, 1);
+
+    //         cv::Vec<double, 5> D(k1, k2, p1, p2, k3);
+
+    //         std::vector<cv::Point2f> undistorted_pts;
+    //         cv::undistortPoints(pts, undistorted_pts, K, D);
+
+    //         undist_map_ = cv::Mat(height, width, CV_32FC2);
+    //         int idx = 0;
+    //         for (int v = 0; v < height; v++) {
+    //             for (int u = 0; u < width; u++) {
+    //                 undist_map_.at<cv::Vec2f>(v, u) = cv::Vec2f(
+    //                     undistorted_pts[idx].x,
+    //                     undistorted_pts[idx].y
+    //                 );
+    //                 idx++;
+    //             }
+    //         }
+
+    //         RCLCPP_INFO(this->get_logger(), "Received camera info and built undistortion map.");
+    //         camera_info_received_ = true;
+    //     }
+    // }
 
     void parallel_sor(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud, 
                         pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud_filtered, 

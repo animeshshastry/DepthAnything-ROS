@@ -201,6 +201,12 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(
+  PROGRAMS
+    scripts/odom_synchronizer.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Tests
 if(BUILD_TESTING)
   list(APPEND AMENT_LINT_AUTO_EXCLUDE ament_cmake_uncrustify)

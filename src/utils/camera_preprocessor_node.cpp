@@ -222,7 +222,7 @@ private:
 		}
 
 		auto out = std::make_unique<sensor_msgs::msg::Image>();
-		out->header = msg->header;
+		out->header = info.header;
 		out->height = bgr.rows;
 		out->width  = bgr.cols;
 		out->encoding = sensor_msgs::image_encodings::BGR8;
@@ -275,7 +275,7 @@ private:
 					cv::BORDER_CONSTANT, border_fill);
 
 		auto out = std::make_unique<sensor_msgs::msg::Image>();
-		out->header = msg->header;
+		out->header = info.header;
 		out->height = rect.rows;
 		out->width  = rect.cols;
 		out->encoding = out_encoding;
@@ -291,7 +291,7 @@ private:
 	{
 		auto mask_msg = std::make_unique<sensor_msgs::msg::Image>();
 		mask_msg->header.stamp = now();
-		mask_msg->header.frame_id = frame_id_override_.empty() ? "" : frame_id_override_;
+		mask_msg->header.frame_id = frame_id_override_;
 		mask_msg->height = valid_mask_.rows;
 		mask_msg->width  = valid_mask_.cols;
 		mask_msg->encoding = sensor_msgs::image_encodings::MONO8;
