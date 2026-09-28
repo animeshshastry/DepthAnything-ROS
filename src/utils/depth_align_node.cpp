@@ -61,6 +61,10 @@ public:
         sync_.reset(new message_filters::Synchronizer<SyncPolicy>(SyncPolicy(syncQueueSize), sparse_sub_, dense_sub_));
         sync_->registerCallback(std::bind(&DepthAlignNode::callback, this, std::placeholders::_1, std::placeholders::_2));
 
+        // subscribe to mask
+        mask_sub_ = this->create_subscription<sensor_msgs::msg::Image>("image_mask", qos, 
+						std::bind(&DepthAlignNode::mask_callback, this, std::placeholders::_1));
+
         // Publisher
         depth_pub_ = this->create_publisher<sensor_msgs::msg::Image>("depth_image", 10);
         if (pub_cloud) cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("depth/pointcloud", 10);
@@ -78,6 +82,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub_;
 
 	rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr cameraInfoSub_;
+    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr mask_sub_;
 
     std::shared_ptr<tf2_ros::Buffer> tfBuffer_;
     std::shared_ptr<tf2_ros::TransformListener> tfListener_;
@@ -96,6 +101,8 @@ private:
 	double fx, fy, cx, cy, k1, k2, p1, p2, k3;
 	uint16_t width, height;
     cv::Mat undist_map_;   // stores normalized coordinates (x = X/Z, y = Y/Z)
+    cv::Mat valid_mask_;   // stores the validity mask for rectified images
+    bool valid_mask_received_ = false;
 
     void callback(const sensor_msgs::msg::Image::ConstSharedPtr& sparse_msg,
                   const sensor_msgs::msg::Image::ConstSharedPtr& dense_msg) {
@@ -152,8 +159,13 @@ private:
         corrected.convertTo(corrected, CV_32FC1);
 
         // Set values greater than max depth to infinity
-        cv::Mat mask = corrected > maxDepth;
-        corrected.setTo(std::numeric_limits<float>::infinity(), mask);
+        cv::Mat mask = corrected < maxDepth;
+        // add the valid_mask_ to the mask to ensure we only keep valid pixels
+        if (valid_mask_received_) {
+            mask = mask & (valid_mask_ > 0);
+        }
+        // corrected.setTo(std::numeric_limits<float>::infinity(), mask);
+        corrected.setTo(std::numeric_limits<float>::quiet_NaN(), ~mask); // set invalid pixels to NaN
 
         // Publish
         auto out_msg = cv_bridge::CvImage(dense_msg->header, "32FC1", corrected).toImageMsg();
@@ -273,6 +285,12 @@ private:
         output.header = cloud_msg.header;
 
         return output;
+    }
+
+    void mask_callback(const sensor_msgs::msg::Image::ConstSharedPtr& mask_msg) {
+        // get valid_mask
+        valid_mask_ = cv_bridge::toCvShare(mask_msg, "mono8")->image; // mask in 8UC1
+        valid_mask_received_ = true;
     }
 
     void cameraInfo_callback(const sensor_msgs::msg::CameraInfo::ConstSharedPtr cam_info) {
